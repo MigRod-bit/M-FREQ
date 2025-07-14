@@ -156,13 +156,25 @@ def read_poscar(filename):
 def gen_fake_OUTCAR(freqs, RC_id, energy):
     """Generate a fake OUTCAR file with frequencies and energy."""
     with open('OUTCAR.fake', 'w') as f:
-        f.write('energy  without entropy=     '+ str(energy) +'  energy(sigma->0) =   '+ str(energy) + '\n')
+        f.write(f'energy  without entropy=     {energy:.6f}  energy(sigma->0) =   {energy:.6f}\n')
         for i, freq in enumerate(freqs):
-            if i == RC_id - 1:  # Highlight the reaction coordinate mode
-                continue
+            if freq < 0:
+                freq_label = f"{freq:.3f}i"
             else:
-                f.write(f"{i+1} f  =   " + str((freq * c * 100)/1E+12) + " THz  " + str(((freq * c * 100)/1E+12)*2*pi) + "  2PiTHz {freq:.3f} cm-1   287.967813 meV\n")
-    print("Fake OUTCAR generated with frequencies.")
+                freq_label = f"{freq:.3f}"
+
+            THz = (freq * c * 1e-12 * 100)
+            two_pi_THz = THz * 2 * pi
+            mode_number = i + 1
+            meV = 0.00012398426 * freq * 1000
+
+            if mode_number == RC_id:
+                tag = " <-- Reaction Coordinate"
+            else:
+                tag = ""
+
+            f.write(f"{mode_number:3d} f  = {THz:10.6f} THz  {two_pi_THz:10.6f}  2PiTHz  {freq_label:>10} cm-1   {meV:.6f} meV{tag}\n")
+
 
 def write_molden(filename, atom_labels, atom_coords, frequencies, normal_modes, norm_diff_grad, geom_mean_grads, red_mass):
     """Write vibrational data and MECP properties in Molden format."""
