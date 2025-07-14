@@ -28,7 +28,7 @@ This script performs vibrational analysis at a **Minimum Energy Crossing Point (
 
 ## 🛠️ Usage
 
-- python mectools.py sing.xml trip.xml POSCAR
+- python mecpfreqs.py sing.xml trip.xml POSCAR
 - Arguments:
   - sing.xml: vasprun.xml file obtained from IBRION = 5 calculation with NUPDOWN = 0
   - trip.xml: vasprun.xml file obtained from IBRION = 5 calculation with NUPDOWN = 2
