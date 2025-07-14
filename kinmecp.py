@@ -159,36 +159,42 @@ def read_thermo(thermo_file):
 R = 8.31446261815324
 if do_kin:
     QMECP, ElenMECP = read_thermo(str(folder_path) + 'thermo.out')
-    print('QMECP', QMECP)
     QR, ElenR = read_thermo(str(do_kin[0]))
-    print('QREACT', QR)
-    e0 = (a.dF  ) / ( 2 * SOC[0] * cmtoJ *  a.F )
-    print('e0', e0)
-    print('redmass', a.redmass)
-    print('F', a.F)
-    print('dF', a.dF)
-    print('SOC', SOC[0])
-    #s = (((4 * ((SOC[0]*NA* cmtoJ) ** (1.5)))/((hj)/(2*pi))) * ((a.redmass/(1000*NA))/(a.F * gradstoSI * a.dF * gradstoSI))**0.5)
-    b1 = (4 * (SOC[0] * cmtoJ)**(3/2))/((hbarj))
-    print('b1', b1)
-    b2 = ((a.redmass*uamtokg)/(a.F* gradstoSI * a.dF * gradstoSI))**(1/2)
-    print('b2', b2)
+
+    print(f"QMECP          : {QMECP:.6e}")
+    print(f"QREACT         : {QR:.6e}")
+
+    e0 = a.dF / (2 * SOC[0] * cmtoJ * a.F)
+    print(f"e0             : {e0:.6e}")
+    print(f"Reduced mass   : {a.redmass:.6f}")
+    print(f"F              : {a.F:.6f}")
+    print(f"dF             : {a.dF:.6f}")
+    print(f"SOC            : {SOC[0]:.6e}")
+
+    b1 = (4 * (SOC[0] * cmtoJ)**(3/2)) / hbarj
+    b2 = ((a.redmass * uamtokg) / (a.F * gradstoSI * a.dF * gradstoSI))**0.5
     s = b1 * b2
-    print('s', s)
-    #k_LZ = (kb * float(temp[0]))**(0.5)  *  (QMECP/(QR*h*evtoHe))  *  ( (pi**(1.5)*s) / (2 * (e0**(0.5)) ) )  *  e**(-((0.1282) * evtoHe)/(kb * float(temp[0])))
-    #P_LZ = ( ((pi**(3/2))*s) / (2 * ((e0/(R * float(temp[0])))**(0.5)) ) ) * e**(-((0.2193) * evtoJ)/(R * float(temp[0])))
+
+    print(f"b1             : {b1:.6e}")
+    print(f"b2             : {b2:.6e}")
+    print(f"s              : {s:.6e}")
+
     u = pi**(3/2) * s
-    d = 2 * (e0/(R*float(temp[0])))**(1/2)
-    P_LZ =  (u/d) * (1/hj)
+    d = 2 * (e0 / (R * float(temp[0])))**0.5
+    P_LZ = (u / d) * (1 / hj)
+
     diffElen = (ElenMECP - ElenR) * kcaltoev
-    print('diff_elect_energy', diffElen)
-    print('Prob', P_LZ)
-    print('exp * Q', (e**(-(((diffElen)) * evtoJ)/(R * float(temp[0]))))* (QMECP/QR))
-    k_LZ =   (QMECP/QR) * P_LZ * e**(-((diffElen) * evtoJ)/(R * float(temp[0])))
-    print('rate', k_LZ)
-    k_TST = (QMECP/QR)* e**(-((diffElen) * evtoJ)/(R * float(temp[0]))) * ((float(temp[0])*kbj)/hj)
-    print('rate_TST', k_TST)
-    #print('exp', e**(-((0.1282) * evtoHe)/(kb * float(temp[0]))))
-    #print('s/e0', ( (pi**(1.5)*s) / (2 * (e0**(0.5)) ) ))
-    print('factorQ', (QMECP/(QR)))
+    print(f"ΔE (elec)      : {diffElen:.6e} eV")
+    print(f"P_LZ           : {P_LZ:.6e}")
+
+    expQ = e**(-((diffElen * evtoJ) / (R * float(temp[0])))) * (QMECP / QR)
+    print(f"exp(-ΔE/RT)*Q  : {expQ:.6e}")
+
+    k_LZ = (QMECP / QR) * P_LZ * e**(-((diffElen * evtoJ) / (R * float(temp[0]))))
+    print(f"Rate (LZ)      : {k_LZ:.6e}")
+
+    k_TST = (QMECP / QR) * e**(-((diffElen * evtoJ) / (R * float(temp[0])))) * ((float(temp[0]) * kbj) / hj)
+    print(f"Rate (TST)     : {k_TST:.6e}")
+
+    print(f"Partition Ratio: {QMECP / QR:.6e}")
 
