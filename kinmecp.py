@@ -196,5 +196,7 @@ if do_kin:
     k_TST = (QMECP / QR) * e**(-((diffElen * evtoJ) / (R * float(temp[0])))) * ((float(temp[0]) * kbj) / hj)
     print(f"Rate (TST)     : {k_TST:.6e}")
 
+    Arr = (QMECP / QR) * P_LZ
+    print(f"Preexponential factor (A)     : {Arr:.6e}")
     print(f"Partition Ratio: {QMECP / QR:.6e}")
 
