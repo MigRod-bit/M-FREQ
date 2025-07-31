@@ -4,6 +4,7 @@ import math
 import sys
 import argparse
 import os
+from scipy.integrate import quad
 
 # Set up argument parser
 parser = argparse.ArgumentParser(description="Process a folder path.")
@@ -41,7 +42,7 @@ Bhtom = 5.29177e-11            # Bohr to meter
 gradstoSI = HetoJmol / Bhtom   # Gradient conversion to J/mol/m
 evtoJ = 1.602176634e-19        # eV to J
 kcaltoev = 0.0433641           # kcal to eV
-
+kcaltoJ = 4184                 # kcal to J
 class MECP:
     def __init__(self):
         # THE FILES WHICH LOAD MECP PROPS:
@@ -131,6 +132,7 @@ except:
 # CALCULATE RATE CONSTANTS:
 
 def read_thermo(thermo_file):
+    Eavg = 0
     with open(thermo_file) as f:
         l = f.readlines()
     lf = len(l)
@@ -143,12 +145,66 @@ def read_thermo(thermo_file):
                     break
         if "Electronic energy:" in l[i]:
             Elect = float(l[i].split()[2])    
-    return Q, Elect
+        if "Eavg" in l[i]:
+            for j in range(i, len(l)):
+                if temp[0] in l[j]:
+                    Eavg = float(l[j].split()[5])
+
+    if Eavg== 0:
+        Eavg = 0.0
+    return Q, Elect, Eavg
+
+# Functions to make the integral
+def LZ_prob(E, H12, dF, mu):
+    """
+    Calculate the Landau-Zener probability.
+    E: Energy 
+    H12: Coupling term
+    dF: Gradient difference
+    mu: Reduced mass
+    """
+    if E <= 0:
+        return 0.0
+    gamma = (2 * np.pi * H12**2) / (hbar_j * dF * np.sqrt(2 * E / mu))   
+    return np.exp(-gamma)
+
+def max_boltz_distr(E, T):
+    """
+    Calculate the maximum Boltzmann distribution.
+    E: Energy 
+    T: Temperature
+    """
+    if E <= 0:
+        return 0.0
+    return np.exp(-E / (kb_j * T)) * (1 / (kb_j * T))
+
+def integrand_single(E, H12, dF, mu, T):
+    """
+    Integrand for the Landau-Zener integral.
+    E: Energy
+    H12: Coupling term
+    dF: Gradient difference
+    mu: Reduced mass
+    T: Temperature
+    """
+    return (1-LZ_prob(E, H12, dF, mu)) * max_boltz_distr(E, T)
+
+def integrand_double(E, H12, dF, mu, T):
+    """
+    Integrand for the Landau-Zener integral.
+    E: Energy
+    H12: Coupling term
+    dF: Gradient difference
+    mu: Reduced mass
+    T: Temperature
+    """
+    return (1-LZ_prob(E, H12, dF, mu)**2) * max_boltz_distr(E, T)
 
 R = 8.31446261815324
 if do_kin:
-    QMECP, ElenMECP = read_thermo(str(folder_path) + 'thermo.out')
-    QR, ElenR = read_thermo(str(do_kin[0]))
+    QMECP, ElenMECP, EavgMECP = read_thermo(str(folder_path) + 'thermo.out')
+    print(f"Eavg: {EavgMECP:.6e} [kcal/mol]")
+    QR, ElenR, dummi = read_thermo(str(do_kin[0]))
     
     T = float(temp[0])
     SOC_cm = SOC[0]
@@ -169,64 +225,37 @@ if do_kin:
     print(f"QMECP          : {QMECP:.6e}")
     print(f"QREACT         : {QR:.6e}")
 
-    # -------------------------------
-    # Taylor Expansion Term (Lambda)
-    # -------------------------------
-    numerator = 2 * pi * SOC_J**2
-    denominator = hbar_j * grad1_Jm
-    sqrt_term = np.sqrt(mu_kg / (kb_j * T))
-    Lambda = (numerator / denominator) * sqrt_term
 
-    # -------------------------------
-    # Extended Landau-Zener Terms
-    # -------------------------------
-    # b1 = (4 * V**(3/2)) / ħ
-    b1 = (4 * SOC_J**1.5) / hbar_j
+    lower_limit = 0.0
+    upper_limit = 40 * kb_j * T  
+    result, error = quad(integrand_single, lower_limit, upper_limit, args=(SOC_J, grad1_Jm, mu_kg, T))
+    
+    print(f"Thermally averaged probability of single cross: {result}")
+    print(f"Estimated error: {error}")
 
-    # b2 = sqrt(mu / (F * ΔF))
-    b2 = np.sqrt(mu_kg / (grad2_Jm * grad1_Jm))
+    result2, error2 = quad(integrand_double, lower_limit, upper_limit, args=(SOC_J, grad1_Jm, mu_kg, T))
 
-    # u = π^(3/2) * b1 * b2
-    u = (pi**1.5) * b1 * b2
+    print(f"Thermally averaged probability of double cross: {result2}")
+    print(f"Estimated error: {error}")
 
-    # e0 = ΔF / (2 * V * F)
-    e0 = grad1_Jm / (2 * SOC_J * grad2_Jm)
-
-    # d = 2 * sqrt(e0 / (R * T))
-    d = 2 * np.sqrt(e0 / (R * T))
-
-    # P_LZ = (u / d) * (1 / h)
-    P_LZ = (u / d) * (1 / h)
-
-    # kLZ = (QMECP / QR) * P_LZ * exp(-ΔE / RT)
-    k_LZ = (QMECP / QR) * Lambda * np.exp(-dE_Jmol / (R * T)) * (kb_j* T / h)
-
-    # kLZ = (QMECP / QR) * P_LZ * exp(-ΔE / RT)
     k_TS = (QMECP / QR)  * np.exp(-dE_Jmol / (R * T)) * (kb_j* T / h)
-
+    k_LZ = k_TS * result
+    k_LZ2 = k_TS * result2
     # -------------------------------
     # Output Results
     # -------------------------------
-    print(f"Taylor expansion term (Lambda) = {Lambda:.4e}")
-    print(f"b1 = {b1:.4e}  [1/s^1.5]")
-    print(f"b2 = {b2:.4e}  [kg^0.5·m/J]")
-    print(f"u = {u:.4e}    [1/s]")
-    print(f"e0 = {e0:.4e}  [J/mol]")
-    print(f"d = {d:.4e}    [unitless]")
-    print(f"P_LZ = {P_LZ:.4e}  [1/s]")
-    print(f"k_LZ = {k_LZ:.4e}  [1/s]")
+
     print(f"k_TS = {k_TS:.4e}  [1/s]")
-
-    if Lambda < 0.1:
-        print("→ Weak coupling regime: Taylor expansion is valid.")
-    elif Lambda < 1:
-        print("→ Moderate coupling: Taylor expansion may be marginal.")
-    else:
-        print("→ Strong coupling: Use full expression for P_LZ.")
+    print(f"k_LZ (single) = {k_LZ:.4e}  [1/s]")
+    print(f"k_LZ (double) = {k_LZ2:.4e}  [1/s]")
 
 
-    Arr = (QMECP / QR) * P_LZ
-    print(f"Preexponential factor (A)     : {Arr:.6e}")
+
+
+    Arr = (QMECP / QR)* result * (kb_j* T / h)
+    Arr2 = (QMECP / QR)* result2 * (kb_j* T / h)
+    print(f"Preexponential factor single (A)     : {Arr:.6e}")
+    print(f"Preexponential factor double (A)     : {Arr2:.6e}")
 
     print(f"Partition Ratio: {QMECP / QR:.6e}")
 
