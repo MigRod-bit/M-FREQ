@@ -5,6 +5,8 @@ import sys
 import argparse
 import os
 from scipy.integrate import quad
+import matplotlib.pyplot as plt
+import pandas as pd
 
 # Set up argument parser
 parser = argparse.ArgumentParser(description="Process a folder path.")
@@ -12,6 +14,7 @@ parser.add_argument("folder_path", type=str, help="Path to the folder containing
 parser.add_argument("--do_kin", nargs=1, type=str, help="optional: will do the kinetic calculation if the thermo.out of the reactant is provided.")
 parser.add_argument("--temp", nargs=1, type=str, help="optional: For the kinetic analysis, temperature is needed")
 parser.add_argument("--SOC", nargs=1, type=float, help="optional: SOC constant of the MECP")
+parser.add_argument("--plot", action='store_true', help="optional: will plot k vs T.")
 
 # Parse arguments
 args = parser.parse_args()
@@ -19,6 +22,7 @@ folder_path = args.folder_path
 do_kin = args.do_kin
 temp = args.temp
 SOC = args.SOC
+kplot = args.plot
 
 # Check if the folder exists
 if not os.path.isdir(folder_path):
@@ -136,13 +140,28 @@ def read_thermo(thermo_file):
     with open(thermo_file) as f:
         l = f.readlines()
     lf = len(l)
+    if kplot == True:
+        Q_temps = []
+        Tps = []
     for i in range(len(l)):
         if "Qtot" in l[i]:
-            for j in range(i, len(l)):
-                if temp[0] in l[j]:
-                    Q = float(l[j].split()[8])
-                if '-----------------' in l[j]:
-                    break
+            if kplot == False:
+                for j in range(i, len(l)):
+                    if temp[0] in l[j]:
+                        Q = float(l[j].split()[8])
+                    if '-----------------' in l[j]:
+                        break
+            elif kplot == True:
+                for j in range(i, len(l)):
+                    try: (l[j].split()[0])
+                    except: break
+                    if (l[j].split()[0]) == 'T':
+                        continue
+                    Tps.append(float(l[j].split()[0]))
+                    Q_temps.append(float(l[j].split()[8]))
+                    if '-----------------' in l[j]:
+                        break
+
         if "Electronic energy:" in l[i]:
             Elect = float(l[i].split()[2])    
         if "Eavg" in l[i]:
@@ -152,7 +171,10 @@ def read_thermo(thermo_file):
 
     if Eavg== 0:
         Eavg = 0.0
-    return Q, Elect, Eavg
+    if kplot == False:
+        return Q, Elect, Eavg
+    elif kplot == True:
+        return Q_temps, Elect, Eavg, Tps
 
 # Functions to make the integral
 def LZ_prob(E, H12, dF, mu):
@@ -202,9 +224,14 @@ def integrand_double(E, H12, dF, mu, T):
 
 R = 8.31446261815324
 if do_kin:
-    QMECP, ElenMECP, EavgMECP = read_thermo(str(folder_path) + 'thermo.out')
-    print(f"Eavg: {EavgMECP:.6e} [kcal/mol]")
-    QR, ElenR, dummi = read_thermo(str(do_kin[0]))
+    if kplot == False:
+        QMECP, ElenMECP, EavgMECP = read_thermo(str(folder_path) + 'thermo.out')
+        QR, ElenR, dummi = read_thermo(str(do_kin[0]))
+    elif kplot == True:
+        QMECP_list, ElenMECP, EavgMECP, Tps = read_thermo(str(folder_path) + 'thermo.out')
+        print(f"QMECP_list: {QMECP_list}")
+        QR_list, ElenR, dummi, dummi2 = read_thermo(str(do_kin[0]))
+        print(f"QR_list: {QR_list}")
     
     T = float(temp[0])
     SOC_cm = SOC[0]
@@ -222,9 +249,14 @@ if do_kin:
     dE_Jmol = dE_eV * evtoJ * NA
 
     # Partition functions
+    if kplot == True:
+        QMECP = QMECP_list[-1]
+        QR = QR_list[-1]
+        print(f"Temperature    : {Tps[-1]:.2f} K")
+
     print(f"QMECP          : {QMECP:.6e}")
     print(f"QREACT         : {QR:.6e}")
-
+    
 
     lower_limit = 0.0
     upper_limit = 40 * kb_j * T  
@@ -248,14 +280,44 @@ if do_kin:
     print(f"k_TS = {k_TS:.4e}  [1/s]")
     print(f"k_LZ (single) = {k_LZ:.4e}  [1/s]")
     print(f"k_LZ (double) = {k_LZ2:.4e}  [1/s]")
-
-
-
-
+    # Calculating the pre-exponential factor
     Arr = (QMECP / QR)* result * (kb_j* T / h)
     Arr2 = (QMECP / QR)* result2 * (kb_j* T / h)
     print(f"Preexponential factor single (A)     : {Arr:.6e}")
     print(f"Preexponential factor double (A)     : {Arr2:.6e}")
-
     print(f"Partition Ratio: {QMECP / QR:.6e}")
+
+    # Different temperature plot
+    if kplot == True:
+        k_TS_list = []
+        k_LZ2_list = []
+        for t in Tps:
+            T = t
+            lower_limit = 0.0
+            upper_limit = 40 * kb_j * T  
+            result2, error2 = quad(integrand_double, lower_limit, upper_limit, args=(SOC_J, grad1_Jm, mu_kg, T))
+            k_TS = (QMECP / QR)  * np.exp(-dE_Jmol / (R * T)) * (kb_j* T / h)
+            k_LZ2 = k_TS * result2
+            k_TS_list.append(k_TS)
+            k_LZ2_list.append(k_LZ2)
+        kTS_array = np.array(k_TS_list)
+        kLZ_2_array = np.array(k_LZ2_list)
+        logkTS = np.log10(kTS_array)
+        logkLZ2 = np.log10(kLZ_2_array)
+        # Save to CSV
+        import pandas as pd
+        df = pd.DataFrame({
+            'Temperature': Tps,
+            'logkTS': logkTS,
+            'logkLZ2': logkLZ2
+        })
+        df.to_csv('rates.csv', index=False)
+        plt.plot(Tps, logkTS, label='k_TS')
+        plt.plot(Tps, logkLZ2, label='k_LZ (double)')
+        plt.xlabel('Temperature (K)')
+        plt.ylabel('Rate constant (1/s)')
+        plt.title('Rate Constants vs Temperature')
+        plt.legend()
+        plt.grid()
+        plt.show()
 
