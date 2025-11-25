@@ -16,48 +16,80 @@ pi = np.pi # Pi
 
 # ================== FUNCTIONS ==================
 
+import numpy as np
+
 def normalize(v):
-    """Function to normalize a vector"""
-    return v / np.linalg.norm(v)
+    """Function to normalize a vector, handles near-zero norm."""
+    norm = np.linalg.norm(v)
+    return v / norm if norm > 1e-10 else np.zeros_like(v)
 
-def construct_projection_matrix(coords, masses, grad_diff):
-    """Construct projection matrix to remove translation, rotation,and grad_diff directions"""
-    natoms = len(masses)  # Number of atoms
-    dim = 3 * natoms  # Dimension of the system (3N)
-    basis = []  # List to hold basis vectors for the projection matrix
+def construct_projection_matrix_orthogonalized(coords, masses, grad_diff, grad_avg):
+    """
+    Constructs the projection matrix by sequentially orthogonalizing 
+    grad_diff (g) and grad_avg (h) against the T+R space and each other.
+    This prevents over-projection.
+    """
+    natoms = len(masses)
+    dim = 3 * natoms
+    basis_vectors = []
+    
+    # --- 1. Define T and R Vectors ---         ONLY REMOVED IN GAS PHASE, KEEP TRANSL AND ROT FOR SOLIDS
+    # Translation vectors (T)
+   #  for i in range(3):
+   #      vec = np.zeros(dim)
+   #      for j in range(natoms):
+   #          vec[3*j + i] = np.sqrt(masses[j])
+   #      basis_vectors.append(normalize(vec))
 
-    # Translation vectors
-    for i in range(3):  # x, y, z
-        vec = np.zeros(dim) 
-        for j in range(natoms):
-            vec[3*j + i] = np.sqrt(masses[j])  # Mass-weighted translation vector
-        basis.append(normalize(vec))
+   #  # Rotation vectors (R)
+   #  center = np.average(coords, axis=0, weights=masses)
+   #  coords_centered = coords - center
+   #  for i in range(3):
+   #      axis = np.zeros(3); axis[i] = 1.0
+   #      vec = np.cross(coords_centered, axis)
+   #      flat = (vec * np.sqrt(masses)[:, np.newaxis]).flatten()
+   #      if np.linalg.norm(flat) > 1e-8:
+   #          # We enforce orthogonality here by running Gram-Schmidt against T
+   #          B_TR = np.array(basis_vectors).T
+   #          # P_TR_out is the projector orthogonal to T (for the current rotation vector)
+   #          P_TR_out = np.eye(dim) - B_TR @ B_TR.T
+   #          rot_perp = P_TR_out @ flat
+   #          basis_vectors.append(normalize(rot_perp))
+            
+    # --- 2. Orthogonalize Gradient Difference (g) against T+R ---
+    # Current basis: B_TR = {T, R}. We define the projector P_TR_out
+    B_TR = np.array(basis_vectors).T
+    P_TR_out = np.eye(dim) - B_TR @ B_TR.T
+    
+    g_raw = grad_diff.flatten()
+    # g_perp is the component of g ORTHOGONAL to T+R
+    g_perp = P_TR_out @ g_raw
+    
+    # Add g_perp to the basis
+    if np.linalg.norm(g_perp) > 1e-10:
+        basis_vectors.append(normalize(g_perp))
+    # Note: If g_perp is zero, g is already fully contained in the T/R subspace.
 
-    # Rotation vectors
-    center = np.average(coords, axis=0, weights=masses) # Weighted center of mass
-    coords_centered = coords - center # Center coordinates around the center of mass
+    # --- 3. Orthogonalize Gradient Average (h) against T+R and g_perp ---
+    # Current basis: B_TRG = {T, R, g_perp}. We define the projector P_TRG_out
+    B_TRG = np.array(basis_vectors).T
+    P_TRG_out = np.eye(dim) - B_TRG @ B_TRG.T
+    
+    h_raw = grad_avg.flatten()
+    # h_perp is the component of h ORTHOGONAL to T+R AND g_perp
+    h_perp = P_TRG_out @ h_raw
+    
+    # Add h_perp to the basis
+    if np.linalg.norm(h_perp) > 1e-10:
+        basis_vectors.append(normalize(h_perp))
+    # Note: If h_perp is zero, h is fully contained in the T/R/g subspace.
 
-    for i in range(3):
-        axis = np.zeros(3) 
-        axis[i] = 1.0 # Axis of rotation (x, y, z)
-        vec = np.cross(coords_centered, axis)  # Cross product for rotation
-        flat = (vec * np.sqrt(masses)[:, np.newaxis]).flatten()  # Mass-weighted rotation vector
-        # Normalize and add to basis if not zero
-        if np.linalg.norm(flat) > 1e-8:
-            basis.append(normalize(flat))
-
-    # Gradient average 
-    # This is the gradient that minimizes the energy along the crossing seam -- This might be needed if MECP is a TS in the crossing seam
-    #basis.append(normalize(grad_avg))
-
-    # Gradient difference
-    # This gradient is the difference between the two states at the MECP and is orthogonal to the reaction coordinate
-    # It is used to ensure that the projection does not include the reaction coordinate direction
-    basis.append(normalize(grad_diff))
-
-    # Construct projection operator
-    B = np.array(basis).T 
-    P = np.eye(dim) - B @ B.T 
+    # --- 4. Final Projection Operator (P) ---
+    # B_final is the complete, numerically orthonormal basis of all vectors to be removed
+    B_final = np.array(basis_vectors).T 
+    
+    # P removes all directions in B_final
+    P = np.eye(dim) - B_final @ B_final.T 
 
     return P
 
@@ -213,6 +245,7 @@ parser = argparse.ArgumentParser(description="Process a folder path.")
 parser.add_argument("vasp_run_list", nargs=2, help="vasprun from singlet and triplet states")
 parser.add_argument("poscar", nargs=1, help="POSCAR file with the coordinates of the MECP")
 
+
 args = parser.parse_args()
 vasprun_S = args.vasp_run_list[0]
 vasprun_T = args.vasp_run_list[1]
@@ -280,7 +313,7 @@ grad_avg_mw = grad_avg.flatten() / np.sqrt(masses3N) # Mass-weighted gradients
 grad_diff_mw = grad_diff.flatten() / np.sqrt(masses3N)
 
 # Construct projection matrix
-P = construct_projection_matrix(MECP_coords, masses, grad_diff_mw)
+P = construct_projection_matrix_orthogonalized(MECP_coords, masses, grad_diff_mw, grad_avg_mw)
 
 # Project Hessian to remove translation, rotation, and grad_diff directions
 H_proj = P.T @ H_mw @ P
@@ -298,9 +331,9 @@ for i, freq in enumerate(frequencies):
         print(f"Mode {i+1:2d}: {freq:10.2f}")
 
 # Find the mode that aligns best with the reaction coordinate
-grad_avg_mw = np.flip(normalize(grad_avg_mw)) # Make sure the gradient is normalized
+grad_avg_mw = normalize(grad_avg_mw.flatten())
 grad_diff_mw = np.flip(normalize(grad_diff_mw)) # Make sure the gradient is normalized
-projections = [np.abs(np.dot(grad_diff_mw, vec)) for vec in np.flip(e_vecs.T)] # Project the gradient difference onto each normal mode
+projections = [np.abs(np.dot(grad_avg_mw, vec)) for vec in np.flip(e_vecs.T)] # Project the gradient difference onto each normal mode
 max_idx = np.argmax(projections) # Find the index of the maximum projection. This will correspond to the reaction coordinate mode
 print(f"Mode {max_idx+1} aligns best with the reaction coordinate with dot product {projections[max_idx]:.3f}")
 
