@@ -23,6 +23,8 @@ def normalize(v):
     norm = np.linalg.norm(v)
     return v / norm if norm > 1e-10 else np.zeros_like(v)
 
+
+
 def construct_projection_matrix_orthogonalized(coords, masses, grad_diff, grad_avg):
     """
     Constructs the projection matrix by sequentially orthogonalizing 
@@ -200,12 +202,15 @@ def gen_fake_OUTCAR(freqs, RC_id, energy):
             mode_number = i + 1
             meV = 0.00012398426 * freq * 1000
 
-            if mode_number == RC_id:
+            if mode_number == RC_id and doRC:
                 tag = " <-- Reaction Coordinate"
             else:
                 tag = ""
 
             f.write(f"{mode_number:3d} f  = {THz:10.6f} THz  {two_pi_THz:10.6f}  2PiTHz  {freq_label:>10} cm-1   {meV:.6f} meV{tag}\n")
+
+    
+
 
 
 def write_molden(filename, atom_labels, atom_coords, frequencies, normal_modes, norm_diff_grad, geom_mean_grads, red_mass):
@@ -244,12 +249,13 @@ import xml.etree.ElementTree as ET
 parser = argparse.ArgumentParser(description="Process a folder path.")
 parser.add_argument("vasp_run_list", nargs=2, help="vasprun from singlet and triplet states")
 parser.add_argument("poscar", nargs=1, help="POSCAR file with the coordinates of the MECP")
-
+parser.add_argument("--RC", action="store_true", help="generate OUTCAR.rc with the reaction coordinate mode")
 
 args = parser.parse_args()
 vasprun_S = args.vasp_run_list[0]
 vasprun_T = args.vasp_run_list[1]
 poscar = args.poscar[0]
+doRC = args.RC
 
 # Read Hessian and gradient from VASP vasprun.xml files
 H1, G1, energy1 = read_vasprun(vasprun_S)
@@ -312,6 +318,8 @@ H_mw = H_avg # Use if hessian is already mass-weighted
 grad_avg_mw = grad_avg.flatten() / np.sqrt(masses3N) # Mass-weighted gradients
 grad_diff_mw = grad_diff.flatten() / np.sqrt(masses3N)
 
+
+
 # Construct projection matrix
 P = construct_projection_matrix_orthogonalized(MECP_coords, masses, grad_diff_mw, grad_avg_mw)
 
@@ -330,12 +338,14 @@ print("Vibrational Frequencies at MECP (cm⁻¹):")
 for i, freq in enumerate(frequencies):
         print(f"Mode {i+1:2d}: {freq:10.2f}")
 
-# Find the mode that aligns best with the reaction coordinate
-grad_avg_mw = normalize(grad_avg_mw.flatten())
-grad_diff_mw = np.flip(normalize(grad_diff_mw)) # Make sure the gradient is normalized
-projections = [np.abs(np.dot(grad_avg_mw, vec)) for vec in np.flip(e_vecs.T)] # Project the gradient difference onto each normal mode
-max_idx = np.argmax(projections) # Find the index of the maximum projection. This will correspond to the reaction coordinate mode
-print(f"Mode {max_idx+1} aligns best with the reaction coordinate with dot product {projections[max_idx]:.3f}")
+max_idx = -1  # Default value if doRC is False
+if doRC:
+    # Find the mode that aligns best with the reaction coordinate
+    grad_avg_mw = normalize(grad_avg_mw.flatten())
+    grad_diff_mw = np.flip(normalize(grad_diff_mw)) # Make sure the gradient is normalized
+    projections = [np.abs(np.dot(grad_diff_mw, vec)) for vec in np.flip(e_vecs.T)] # Project the gradient difference onto each normal mode
+    max_idx = np.argmax(projections) # Find the index of the maximum projection. This will correspond to the reaction coordinate mode
+    print(f"Mode {max_idx+1} aligns best with the reaction coordinate with dot product {projections[max_idx]:.3f}")
 
 # Calculation of the reduced mass orthogonal to the seam of crossing
 vecs_mw = np.flip(e_vecs.T)  # Each row is a mass-weighted normal mode
@@ -352,6 +362,8 @@ mean_mu = np.mean(reduced_masses)
 gen_fake_OUTCAR(frequencies, max_idx+1, energy)
 
 MECP_coords_ang = MECP_coords / 1.8897259886
+
+
 
 write_molden(
     "MECP.info.molden",
